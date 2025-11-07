@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Raw Serial → MIDI Viewer</title>
+<style>
+  body{font:14px system-ui;margin:20px;background:#0b1220;color:#e5e7eb}
+  button{padding:8px 12px;border-radius:8px;border:1px solid #334155;background:#111827;color:#e5e7eb;cursor:pointer}
+  .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+  #log{margin-top:14px;border:1px solid #1f2937;border-radius:10px;padding:10px;max-height:360px;overflow:auto;background:#0a0f1a}
+</style>
+<h1>Raw Serial → MIDI Viewer</h1>
+<p>Click “Connect Serial”, choose your UNO R4 port, then scan a tag. This parses fixed 3-byte messages as MIDI (status, data1, data2).</p>
+<button id="connect">Connect Serial</button>
+<div id="status" class="mono">Status: disconnected</div>
+<div id="log" class="mono"></div>
+<script>
+const statusEl = document.getElementById('status');
+const logEl = document.getElementById('log');
+const btn = document.getElementById('connect');
+
+function log(s){
+  const d=document.createElement('div'); d.textContent=s; logEl.prepend(d);
+  if (logEl.childElementCount>400) logEl.removeChild(logEl.lastChild);
+}
+
+async function readLoop(port){
+  await port.open({ baudRate: 115200 });
+  statusEl.textContent = 'Status: connected @115200';
+  const reader = port.readable.getReader();
+  try{
+    let buf = new Uint8Array(0);
+    while(true){
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      // append to buffer
+      let tmp = new Uint8Array(buf.length + value.length);
+      tmp.set(buf, 0); tmp.set(value, buf.length); buf = tmp;
+
+      // parse fixed 3-byte messages
+      while (buf.length >= 3){
+        const msg = buf.slice(0,3);
+        buf = buf.slice(3);
+
+        const status = msg[0] & 0xF0;
+        const chan   = (msg[0] & 0x0F) + 1;
+        const d1 = msg[1] & 0x7F;
+        const d2 = msg[2] & 0x7F;
+
+        if (status === 0x90 && d2 > 0){
+          log(`NoteOn  ch:${chan} note:${d1} vel:${d2}  raw=[${hex(msg[0])} ${hex(msg[1])} ${hex(msg[2])}]`);
+        } else if (status === 0x80 || (status === 0x90 && d2 === 0)){
+          log(`NoteOff ch:${chan} note:${d1} vel:${d2}  raw=[${hex(msg[0])} ${hex(msg[1])} ${hex(msg[2])}]`);
+        } else {
+          log(`MIDI 0x${status.toString(16)} ch:${chan} d1:${d1} d2:${d2}`);
+        }
+      }
+    }
+  } catch(e){
+    log('Error: '+e);
+  } finally {
+    reader.releaseLock();
+    await port.close();
+    statusEl.textContent = 'Status: disconnected';
+  }
+}
+
+function hex(b){ return '0x'+b.toString(16).padStart(2,'0'); }
+
+btn.addEventListener('click', async ()=>{
+  if (!('serial' in navigator)) { alert('Web Serial not supported in this browser'); return; }
+  try{
+    const port = await navigator.serial.requestPort();
+    readLoop(port);
+  } catch(e){
+    log('Port open canceled/failed.');
+  }
+});
+</script>
