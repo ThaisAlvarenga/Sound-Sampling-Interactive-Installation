@@ -26,12 +26,14 @@
 
 #include <Wire.h>
 #include "SparkFun_Qwiic_Rfid.h"
+#include <Stepper.h>
 
-//  ---- RFID reader
+//  ------------- RFID READER -------------
+
 #define RFID_ADDR 0x7D  // I2C address seen on Wire1 scan
 Qwiic_Rfid myRfid(RFID_ADDR); // Create RFID instance on that address
 
-/* ---- Tag → index mapping ----
+/* ---- Tag → index mapping 
  *  
  *  Tag: 07718512016836   SONG: 
  *  Tag: 07718512015717   SONG:
@@ -52,13 +54,35 @@ recordTags vinylTags[] = {
 
 const int NUM_TAGS = sizeof(vinylTags) / sizeof(vinylTags[0]);
 
-// ---- Trigger Debounce / Cooldown 
+// ---- RFID Trigger Debounce / Cooldown 
 
 bool canTrigger = true;
 unsigned long lastTriggerTime = 0;
 const unsigned long RETRIGGER_TIME = 600; // Delay window (ms) between triggers
 
-// ------------- Helpers (debug/data) -------------
+
+// ------------- BUTTON -------------
+const int BUTTON_PIN = 2;
+
+// ---- Button debounce state
+int buttonState = HIGH;              // current stable state (with INPUT_PULLUP, HIGH = not pressed)
+int lastButtonReading = HIGH;        // last raw reading
+unsigned long lastDebounceTime = 0;
+const unsigned long DEBOUNCE_DELAY = 50;  // ms
+
+// ------------- STEPPER MOTOR -------------
+const int stepsPerRevolution = 200;  // change this to fit the number of steps per revolution
+// for your motor
+const int STEPPER_PIN_1 = 8;
+const int STEPPER_PIN_2 = 9;
+const int STEPPER_PIN_3 = 10;
+const int STEPPER_PIN_4 = 11;
+
+Stepper myStepper(stepsPerRevolution, STEPPER_PIN_1, STEPPER_PIN_2, STEPPER_PIN_3, STEPPER_PIN_4);
+bool stepperRunning = false;     // becomes true when a recognized tag is seen
+
+
+// ------------- HELPERS (debug/data) -------------
 #define DEBUG_ON        1              // set to 0 to silence debug
 #if DEBUG_ON
   #define DBG(msg)   do { Serial.print(F("[DEBUG] ")); Serial.println(msg); } while (0)
@@ -79,6 +103,13 @@ void setup() {
 
   DBG(F("USB Serial online @ 115200"));
 
+  // Button as INPUT_PULLUP (button to GND)
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  // LED for visual feedback
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
+
   // set up RFID Qwiic bus
   Wire1.begin(); // UNO R4 WiFi Qwiic bus
   
@@ -88,6 +119,10 @@ void setup() {
     DBG(F("Could not communicate with Qwiic RFID on Wire1!"));
     while (1) { delay(500); } // Freeze execution
   }
+
+  // Stepper configuration
+  myStepper.setSpeed(45);   // rpm – adjust for your desired platter speed
+
   // RFID confirmation message
   DBG(F("Ready. Present a 125 kHz EM4100/TK4100 tag 1–2 cm over the can..."));
 
@@ -119,6 +154,8 @@ void loop() {
           sendData(vinylTags[i].songName); //host listens for this
 
           DBG(String("Song sent: ")+ vinylTags[i].songName);
+
+          
           
           // Visual feedback (LED on)
           // digitalWrite(LED_BUILTIN, HIGH);
@@ -143,7 +180,9 @@ void loop() {
   delay(40); 
 
   // ---- CODE LOGIC:
-
+  //If BUTTON PRESSED
+    // 1. Read RFID Tag
+    
   // IF RECOGNIZABLE RFID TAG IS READ
   
     // 2. SEND SERIAL MESSAGE WITH TAG'S CORRESPONDING SONG
